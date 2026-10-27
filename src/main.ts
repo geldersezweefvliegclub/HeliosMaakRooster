@@ -1,0 +1,72 @@
+// .env zo vroeg mogelijk inladen, zodat top-level process.env reads
+// (zoals CRON_ROLLEND in de schedulers) de waarden uit het .env bestand zien.
+import 'dotenv/config';
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { AppModule } from './app.module';
+import { WinstonModule } from 'nest-winston';
+import * as winston from 'winston';
+import {SeqTransport} from "@datalust/winston-seq";
+
+
+/**
+ * Create a logger for the application using Winston instead of the built-in nestjs logger.
+ * Allows for logging to multiple transports, such as the console and Seq, or modifying the log format.
+ */
+const createLogger = () => WinstonModule.createLogger({
+  level: process.env.LOGGER_LEVEL || 'info',
+  format: winston.format.combine(   /* This is required to get errors to log with stack traces. See https://github.com/winstonjs/winston/issues/1498 */
+     winston.format.errors({stack: true}),
+     winston.format.json(),
+  ),
+  defaultMeta: {
+    Application: 'heliosMaakRooster',
+    Instance: process.env.INSTANCE || 'Local',
+    Environment: process.env.NODE_ENV || 'Local',
+  },
+  transports: [
+    new winston.transports.Console({
+      level: 'silly',
+      format: winston.format.combine(
+         winston.format.colorize({
+           all: true,
+         }),
+         winston.format.simple(),
+      ),
+    }),
+    ...(process.env.LOGGER_SERVER_URL ? [new SeqTransport({
+      serverUrl: process.env.LOGGER_SERVER_URL,
+      apiKey: process.env.LOGGER_API_KEY,
+      onError: ((e: Error) => {
+        console.error(e);
+      }),
+      handleExceptions: true,
+      handleRejections: true,
+    })] : []),
+  ],
+});
+
+async function bootstrap() {
+  const app = await NestFactory.createApplicationContext(AppModule, {
+    logger: createLogger(),
+  });
+  const logger = new Logger('Application');
+
+  logger.log('heliosMaakRooster started as background worker');
+
+  const shutdown = async (signal: string) => {
+    logger.log(`Received ${signal}, shutting down gracefully...`);
+    await app.close();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+bootstrap().catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error('Failed to start application:', err);
+  process.exit(1);
+});
