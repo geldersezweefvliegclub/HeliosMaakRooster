@@ -1,20 +1,26 @@
-# Use an official Node.js runtime as a parent image
-FROM node:22-alpine
+# Build stage draait op het platform van de build machine (geen QEMU emulatie nodig)
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 
-# Set the working directory in the container
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
-
-# Install any needed packages
 RUN npm ci
 
-# Bundle app source
 COPY . .
-
-# Build the project
 RUN npm run build
 
-# Run the app when the container launches
-CMD [ "npm", "start" ]
+# Alleen productie dependencies overhouden (allemaal pure JavaScript, dus platform onafhankelijk)
+RUN npm prune --omit=dev
+
+# Runtime stage voor het doelplatform, hierin wordt niets uitgevoerd tijdens de build
+FROM node:22-alpine
+
+WORKDIR /usr/src/app
+ENV NODE_ENV=production
+
+COPY --from=build /usr/src/app/package.json ./
+COPY --from=build /usr/src/app/node_modules ./node_modules
+COPY --from=build /usr/src/app/dist ./dist
+
+# Direct node starten zodat SIGTERM de applicatie bereikt (graceful shutdown)
+CMD [ "node", "dist/main.js" ]

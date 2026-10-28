@@ -9,3 +9,6 @@ README.md
 
 Dockerfile
 .dockerignore
+helios.account.json
+dist
+*.tsbuildinfo
